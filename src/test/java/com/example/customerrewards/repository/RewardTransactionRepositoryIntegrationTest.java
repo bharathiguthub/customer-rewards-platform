@@ -86,13 +86,11 @@ class RewardTransactionRepositoryIntegrationTest {
         String key = "key-123";
 
         RewardTransaction first = buildTransaction(customer, 100, key);
-        transactionRepository.save(first);
-        entityManager.flush();
+        transactionRepository.saveAndFlush(first);
 
         assertThrows(DataIntegrityViolationException.class, () -> {
             RewardTransaction second = buildTransaction(customer, 200, key);
-            transactionRepository.save(second);
-            entityManager.flush();
+            transactionRepository.saveAndFlush(second);
         });
     }
 
@@ -118,8 +116,7 @@ class RewardTransactionRepositoryIntegrationTest {
 
         assertThrows(DataIntegrityViolationException.class, () -> {
             RewardTransaction tx = buildTransaction(customer, 0, null);
-            transactionRepository.save(tx);
-            entityManager.flush();
+            transactionRepository.saveAndFlush(tx);
         });
     }
 

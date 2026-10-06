@@ -69,13 +69,11 @@ class CustomerRepositoryIntegrationTest {
     void givenDuplicateEmail_whenSave_thenThrowsDataIntegrityViolationException() {
         String sharedEmail = "duplicate." + UUID.randomUUID() + "@example.com";
         Customer first = buildCustomer(sharedEmail);
-        customerRepository.save(first);
-        entityManager.flush();
+        customerRepository.saveAndFlush(first);
 
         assertThrows(DataIntegrityViolationException.class, () -> {
             Customer second = buildCustomer(sharedEmail);
-            customerRepository.save(second);
-            entityManager.flush();
+            customerRepository.saveAndFlush(second);
         });
     }
 
@@ -97,8 +95,7 @@ class CustomerRepositoryIntegrationTest {
         assertThrows(DataIntegrityViolationException.class, () -> {
             Customer customer = buildCustomer("negative." + UUID.randomUUID() + "@example.com");
             customer.setRewardBalance(-1);
-            customerRepository.save(customer);
-            entityManager.flush();
+            customerRepository.saveAndFlush(customer);
         });
     }
 }
