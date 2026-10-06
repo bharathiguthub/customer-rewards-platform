@@ -1,7 +1,0 @@
-# Flyway migration scripts will be added in Phase 2.
-# V1__create_customers_table.sql
-# V2__create_rewards_accounts_table.sql
-# V3__create_rewards_transactions_table.sql
-#
-# This .gitkeep ensures the directory is tracked by git.
-# Do NOT add SQL migration scripts here until Phase 2 is approved.
