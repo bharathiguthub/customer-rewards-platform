@@ -51,13 +51,15 @@ class RedemptionServiceImplTest {
         return c;
     }
 
-    private RewardTransaction buildTransaction(UUID txId, Customer customer, int points, String idempotencyKey) {
+    private RewardTransaction buildTransaction(UUID txId, Customer customer, int points,
+                                               String idempotencyKey, int remainingBalanceSnapshot) {
         RewardTransaction tx = new RewardTransaction();
         tx.setId(txId);
         tx.setCustomer(customer);
         tx.setType(TransactionType.REDEEM);
         tx.setPoints(points);
         tx.setIdempotencyKey(idempotencyKey);
+        tx.setRemainingBalanceSnapshot(remainingBalanceSnapshot);
         tx.setCreatedAt(Instant.now());
         return tx;
     }
@@ -69,12 +71,16 @@ class RedemptionServiceImplTest {
         RedeemPointsRequest request = new RedeemPointsRequest(500, null);
         String idempotencyKey = "key-success";
 
-        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
         when(rewardTransactionRepository.findByCustomerIdAndIdempotencyKey(customerId, idempotencyKey))
             .thenReturn(Optional.empty());
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
         when(customerRepository.saveAndFlush(any(Customer.class))).thenReturn(customer);
-        when(rewardTransactionRepository.save(any(RewardTransaction.class)))
-            .thenAnswer(inv -> inv.getArgument(0));
+        when(rewardTransactionRepository.saveAndFlush(any(RewardTransaction.class)))
+            .thenAnswer(inv -> {
+                RewardTransaction tx = inv.getArgument(0);
+                tx.setId(UUID.randomUUID());
+                return tx;
+            });
 
         RedeemPointsResponse response = redemptionService.redeemPoints(customerId, idempotencyKey, request);
 
@@ -89,9 +95,9 @@ class RedemptionServiceImplTest {
         Customer customer = buildCustomer(customerId, 100);
         RedeemPointsRequest request = new RedeemPointsRequest(500, null);
 
-        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
         when(rewardTransactionRepository.findByCustomerIdAndIdempotencyKey(any(), any()))
             .thenReturn(Optional.empty());
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
 
         assertThrows(InsufficientRewardBalanceException.class,
             () -> redemptionService.redeemPoints(customerId, "key-insuf", request));
@@ -120,10 +126,12 @@ class RedemptionServiceImplTest {
         UUID customerId = UUID.randomUUID();
         UUID txId = UUID.randomUUID();
         Customer customer = buildCustomer(customerId, 500);
-        RewardTransaction existing = buildTransaction(txId, customer, 300, "key-idem");
+        // Snapshot = 700: the balance recorded at original commit time.
+        // Current customer balance is 500 (changed by a later transaction).
+        // Replay must return 700, not 500.
+        RewardTransaction existing = buildTransaction(txId, customer, 300, "key-idem", 700);
         RedeemPointsRequest request = new RedeemPointsRequest(300, null);
 
-        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
         when(rewardTransactionRepository.findByCustomerIdAndIdempotencyKey(customerId, "key-idem"))
             .thenReturn(Optional.of(existing));
 
@@ -131,6 +139,10 @@ class RedemptionServiceImplTest {
 
         assertThat(response.transactionId()).isEqualTo(txId);
         assertThat(response.pointsRedeemed()).isEqualTo(300);
+        // Must return the snapshot (700), not the current balance (500)
+        assertThat(response.remainingBalance()).isEqualTo(700);
+        // Customer must not be loaded for a replay
+        verify(customerRepository, never()).findById(any());
     }
 
     @Test
@@ -138,15 +150,15 @@ class RedemptionServiceImplTest {
         UUID customerId = UUID.randomUUID();
         UUID txId = UUID.randomUUID();
         Customer customer = buildCustomer(customerId, 500);
-        RewardTransaction existing = buildTransaction(txId, customer, 300, "key-idem2");
+        RewardTransaction existing = buildTransaction(txId, customer, 300, "key-idem2", 700);
         RedeemPointsRequest request = new RedeemPointsRequest(300, null);
 
-        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
         when(rewardTransactionRepository.findByCustomerIdAndIdempotencyKey(customerId, "key-idem2"))
             .thenReturn(Optional.of(existing));
 
         redemptionService.redeemPoints(customerId, "key-idem2", request);
 
+        verify(customerRepository, never()).findById(any());
         verify(customerRepository, never()).save(any());
         verify(customerRepository, never()).saveAndFlush(any());
     }
@@ -157,9 +169,9 @@ class RedemptionServiceImplTest {
         Customer customer = buildCustomer(customerId, 1000);
         RedeemPointsRequest request = new RedeemPointsRequest(500, null);
 
-        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
         when(rewardTransactionRepository.findByCustomerIdAndIdempotencyKey(any(), any()))
             .thenReturn(Optional.empty());
+        when(customerRepository.findById(customerId)).thenReturn(Optional.of(customer));
         when(customerRepository.saveAndFlush(any(Customer.class)))
             .thenThrow(new ObjectOptimisticLockingFailureException(Customer.class, customerId));
 

@@ -41,6 +41,15 @@ public class RewardTransaction {
     @Column(name = "idempotency_key", length = 255)
     private String idempotencyKey;
 
+    /**
+     * Snapshot of the customer's reward balance immediately after this transaction committed.
+     * Stored so idempotent replays can return the exact same remainingBalance as the original
+     * response, regardless of subsequent balance changes.
+     * Nullable for legacy/admin transactions created without this field.
+     */
+    @Column(name = "remaining_balance_snapshot")
+    private Integer remainingBalanceSnapshot;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -108,6 +117,14 @@ public class RewardTransaction {
 
     public void setIdempotencyKey(String idempotencyKey) {
         this.idempotencyKey = idempotencyKey;
+    }
+
+    public Integer getRemainingBalanceSnapshot() {
+        return remainingBalanceSnapshot;
+    }
+
+    public void setRemainingBalanceSnapshot(Integer remainingBalanceSnapshot) {
+        this.remainingBalanceSnapshot = remainingBalanceSnapshot;
     }
 
     public Instant getCreatedAt() {
