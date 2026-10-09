@@ -44,3 +44,12 @@ docker-compose.override.yml
 
 # Kiro local artifacts
 .agents/
+
+
+# Local build/test artifacts
+build_output.txt
+build_error.txt
+test_results.txt
+
+# Local AWS CLI request files
+customer-key.json

@@ -13,21 +13,10 @@ management:
       show-details: always
 
 spring:
-  datasource:
-    url: ${DB_URL}
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
-    driver-class-name: org.postgresql.Driver
-  jpa:
-    hibernate:
-      ddl-auto: validate
-    show-sql: false
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
-  flyway:
-    enabled: true
-    locations: classpath:db/migration
+  logging:
+    level:
+      root: INFO
+      com.example.customerrewards: INFO
 
 logging:
   level:
@@ -39,3 +28,14 @@ springdoc:
     path: /api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+# AWS / DynamoDB Configuration
+# Defaults to us-east-1 but can be overridden via environment variable AWS_REGION
+# For local development, set aws.dynamodb.endpoint to http://localhost:8000
+aws:
+  region: ${AWS_REGION:us-east-1}
+  dynamodb:
+    endpoint: ${AWS_DYNAMODB_ENDPOINT:}
+    customer-table: customers
+    transaction-table: reward_transactions
+    idempotency-lock-table: reward_idempotency_locks

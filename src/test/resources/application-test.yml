@@ -1,7 +1,6 @@
 spring:
-  flyway:
-    enabled: true
-  jpa:
-    hibernate:
-      ddl-auto: validate
-    show-sql: true
+  # No additional configuration needed for tests
+
+aws:
+  dynamodb:
+    endpoint: http://localhost:8000

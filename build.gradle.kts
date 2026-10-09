@@ -18,27 +18,26 @@ repositories {
 dependencies {
     // Spring Boot starters
     implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-validation")
 
-    // PostgreSQL driver (runtime only)
-    runtimeOnly("org.postgresql:postgresql")
-
-    // Flyway
-    implementation("org.flywaydb:flyway-core")
-    implementation("org.flywaydb:flyway-database-postgresql")
+    // Spring Data Commons (for Page/Pageable without JPA)
+    implementation("org.springframework.data:spring-data-commons")
 
     // OpenAPI / Swagger UI
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.8")
 
+    // AWS SDK v2 DynamoDB
+    implementation("software.amazon.awssdk:dynamodb-enhanced:2.25.10")
+    implementation("software.amazon.awssdk:dynamodb:2.25.10")
+
     // Test dependencies
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("com.h2database:h2:2.2.220")
 
     // Testcontainers BOM + modules
     testImplementation(platform("org.testcontainers:testcontainers-bom:1.20.4"))
     testImplementation("org.testcontainers:junit-jupiter")
-    testImplementation("org.testcontainers:postgresql")
 }
 
 tasks.withType<Test> {

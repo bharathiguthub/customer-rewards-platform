@@ -2,7 +2,9 @@ package com.example.customerrewards.mapper;
 
 import com.example.customerrewards.dto.response.CustomerResponse;
 import com.example.customerrewards.dto.response.RewardBalanceResponse;
-import com.example.customerrewards.entity.Customer;
+import com.example.customerrewards.dynamodb.models.DynamoCustomer;
+
+import java.util.UUID;
 
 public class CustomerMapper {
 
@@ -10,9 +12,9 @@ public class CustomerMapper {
         // Utility class
     }
 
-    public static CustomerResponse toResponse(Customer customer) {
+    public static CustomerResponse toDynamoResponse(DynamoCustomer customer) {
         return new CustomerResponse(
-            customer.getId(),
+            UUID.fromString(customer.getCustomerId()),
             customer.getFirstName(),
             customer.getLastName(),
             customer.getEmail(),
@@ -21,9 +23,9 @@ public class CustomerMapper {
         );
     }
 
-    public static RewardBalanceResponse toBalanceResponse(Customer customer) {
+    public static RewardBalanceResponse toDynamoBalanceResponse(DynamoCustomer customer) {
         return new RewardBalanceResponse(
-            customer.getId(),
+            UUID.fromString(customer.getCustomerId()),
             customer.getRewardBalance()
         );
     }

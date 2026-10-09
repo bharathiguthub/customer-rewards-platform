@@ -2,24 +2,23 @@ package com.example.customerrewards.service.impl;
 
 import com.example.customerrewards.dto.request.RedeemPointsRequest;
 import com.example.customerrewards.dto.response.RedeemPointsResponse;
-import com.example.customerrewards.entity.Customer;
-import com.example.customerrewards.entity.RewardTransaction;
-import com.example.customerrewards.entity.TransactionType;
+import com.example.customerrewards.dynamodb.exception.DynamoDbException;
+import com.example.customerrewards.dynamodb.models.DynamoCustomer;
+import com.example.customerrewards.dynamodb.models.DynamoRewardTransaction;
+import com.example.customerrewards.dynamodb.models.IdempotencyLockItem;
+import com.example.customerrewards.dynamodb.repository.DynamoCustomerRepository;
+import com.example.customerrewards.dynamodb.repository.DynamoRewardTransactionRepository;
 import com.example.customerrewards.exception.CustomerNotFoundException;
 import com.example.customerrewards.exception.InsufficientRewardBalanceException;
 import com.example.customerrewards.exception.InvalidRewardPointsException;
 import com.example.customerrewards.exception.RewardConcurrencyException;
 import com.example.customerrewards.mapper.RewardTransactionMapper;
-import com.example.customerrewards.repository.CustomerRepository;
-import com.example.customerrewards.repository.RewardTransactionRepository;
 import com.example.customerrewards.service.RedemptionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -28,99 +27,93 @@ public class RedemptionServiceImpl implements RedemptionService {
 
     private static final Logger log = LoggerFactory.getLogger(RedemptionServiceImpl.class);
 
-    private final CustomerRepository customerRepository;
-    private final RewardTransactionRepository rewardTransactionRepository;
+    private final DynamoCustomerRepository dynamoCustomerRepository;
+    private final DynamoRewardTransactionRepository dynamoTransactionRepository;
 
-    public RedemptionServiceImpl(CustomerRepository customerRepository,
-                                  RewardTransactionRepository rewardTransactionRepository) {
-        this.customerRepository = customerRepository;
-        this.rewardTransactionRepository = rewardTransactionRepository;
+    public RedemptionServiceImpl(DynamoCustomerRepository dynamoCustomerRepository,
+                                DynamoRewardTransactionRepository dynamoTransactionRepository) {
+        this.dynamoCustomerRepository = dynamoCustomerRepository;
+        this.dynamoTransactionRepository = dynamoTransactionRepository;
     }
 
     @Override
-    @Transactional
     public RedeemPointsResponse redeemPoints(UUID customerId, String idempotencyKey, RedeemPointsRequest request) {
-
-        // Step 1: Validate points > 0.
-        // Done before any DB access so invalid requests are rejected immediately.
+        // Step 1: Validate points > 0
         if (request.points() <= 0) {
             throw new InvalidRewardPointsException(request.points());
         }
 
-        // Step 2: Idempotency check — before loading the customer.
-        // If a transaction already exists for this (customerId, idempotencyKey) pair,
-        // return its stored remainingBalanceSnapshot directly. No customer load is
-        // needed because all the information required for the response is on the
-        // transaction itself. This also means the customer entity is never locked
-        // on the replay path, keeping replay throughput independent of new redemptions.
-        Optional<RewardTransaction> existingTx =
-                rewardTransactionRepository.findByCustomerIdAndIdempotencyKey(customerId, idempotencyKey);
-        if (existingTx.isPresent()) {
-            log.info("Idempotent replay for key: {} customer: {}", idempotencyKey, customerId);
-            // toRedeemResponse reads tx.getRemainingBalanceSnapshot() — the exact value
-            // stored at original commit time — so replays always return the original result
-            // regardless of any subsequent balance changes.
-            return RewardTransactionMapper.toRedeemResponse(existingTx.get());
+        // Step 2: Idempotency check — check if lock already exists from a previous successful request
+        String compositeIdempotencyId = "IDEMPOTENCY#" + customerId + "#" + idempotencyKey;
+        Optional<IdempotencyLockItem> existingLock = dynamoTransactionRepository.getIdempotencyLock(compositeIdempotencyId);
+        if (existingLock.isPresent()) {
+            log.info("Idempotent replay for key: {} customer: {}, returning cached result", idempotencyKey, customerId);
+            // Retrieve the cached transaction result using transactionId from lock
+            String cachedTransactionId = existingLock.get().getTransactionId();
+            DynamoRewardTransaction cachedTx = dynamoTransactionRepository.findById(cachedTransactionId)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Idempotency lock found but transaction not found for transactionId: " + cachedTransactionId));
+            return RewardTransactionMapper.toDynamoRedeemResponse(cachedTx);
         }
 
-        // Step 3: Load customer — only reached for genuinely new redemptions.
-        Customer customer = customerRepository.findById(customerId)
+        // Step 3: Load customer from DynamoDB (primary source)
+        DynamoCustomer customer = dynamoCustomerRepository.findById(customerId.toString())
                 .orElseThrow(() -> new CustomerNotFoundException(customerId));
 
-        // Step 4: Validate balance.
+        // Step 4: Validate balance
         if (customer.getRewardBalance() < request.points()) {
             throw new InsufficientRewardBalanceException(request.points(), customer.getRewardBalance());
         }
 
-        // Step 5: Deduct points.
-        customer.setRewardBalance(customer.getRewardBalance() - request.points());
+        // Step 5: Create transaction object (to be inserted atomically with customer update and lock)
+        Instant now = Instant.now();
+        String transactionId = UUID.randomUUID().toString();
+        DynamoRewardTransaction transaction = new DynamoRewardTransaction(
+                transactionId,
+                now,
+                customerId.toString(),
+                "REDEEM",
+                request.points(),
+                idempotencyKey,
+                customer.getRewardBalance() - request.points()
+        );
 
-        // Step 6: Flush the customer update immediately so the optimistic lock version
-        // check fires inside this method body (not deferred to commit time).
-        // If another transaction already committed a version bump for this customer,
-        // Hibernate raises ObjectOptimisticLockingFailureException here and we map
-        // it to a retryable domain exception. The caller receives a clear 409 signal.
+        // Step 6: Execute atomic redemption using transactWriteItems
+        // This atomically:
+        // 1. Updates customer balance and version
+        // 2. Creates transaction record
+        // 3. Creates idempotency lock (prevents concurrent duplicate processing)
         try {
-            customerRepository.saveAndFlush(customer);
-        } catch (ObjectOptimisticLockingFailureException e) {
-            throw new RewardConcurrencyException(customerId, e);
+            dynamoTransactionRepository.executeRedemptionTransaction(
+                    customerId.toString(),
+                    customer.getVersion(),
+                    request.points(),
+                    idempotencyKey,
+                    transaction
+            );
+            log.info("Points redeemed: {} for customer: {}, remaining balance: {}, lockId: {}",
+                    request.points(), customerId, customer.getRewardBalance() - request.points(), compositeIdempotencyId);
+            return RewardTransactionMapper.toDynamoRedeemResponse(transaction);
+        } catch (DynamoDbException e) {
+            // Check if the failure was due to lock contention (idempotency conflict)
+            if (e.getMessage().contains("ConditionalCheckFailedException") && e.getMessage().contains("lockId")) {
+                // Lock creation failed because another concurrent request already claimed it
+                log.warn("Concurrent same-key lock contention detected for key: {}, reading winner lock", idempotencyKey);
+                Optional<IdempotencyLockItem> winnerLock = dynamoTransactionRepository.getIdempotencyLock(compositeIdempotencyId);
+                if (winnerLock.isPresent()) {
+                    String winnerTransactionId = winnerLock.get().getTransactionId();
+                    DynamoRewardTransaction winnerTx = dynamoTransactionRepository.findById(winnerTransactionId)
+                            .orElseThrow(() -> new IllegalStateException(
+                                    "Idempotency lock found but transaction not found for transactionId: " + winnerTransactionId));
+                    return RewardTransactionMapper.toDynamoRedeemResponse(winnerTx);
+                } else {
+                    throw new IllegalStateException("Idempotency lock condition failed but lock not found for key: " + compositeIdempotencyId);
+                }
+            } else if (e.getMessage().contains("ConditionalCheckFailedException")) {
+                // Version mismatch - concurrent update to customer
+                throw new RewardConcurrencyException(customerId, e);
+            }
+            throw e;
         }
-
-        // Step 7: Persist the transaction with a balance snapshot.
-        // The snapshot captures the exact remaining balance at this moment so any
-        // future idempotent replay returns the original result, not the current balance.
-        //
-        // Race condition: two requests carrying the SAME idempotency key may both pass
-        // the idempotency check above before either has committed (the check ran before
-        // either INSERT existed). In that case one INSERT will succeed and the other
-        // will hit the partial unique index on (customer_id, idempotency_key), surfacing
-        // as a DataIntegrityViolationException. We catch that here and re-read the
-        // winning transaction, returning its stored snapshot as the idempotent response.
-        // This guarantees points are deducted at most once even under concurrent same-key
-        // requests, and it never exposes an unhandled constraint exception to the caller.
-        RewardTransaction transaction = new RewardTransaction();
-        transaction.setCustomer(customer);
-        transaction.setType(TransactionType.REDEEM);
-        transaction.setPoints(request.points());
-        transaction.setIdempotencyKey(idempotencyKey);
-        transaction.setRemainingBalanceSnapshot(customer.getRewardBalance());
-
-        try {
-            rewardTransactionRepository.saveAndFlush(transaction);
-        } catch (DataIntegrityViolationException e) {
-            // Another concurrent request with the same idempotency key committed first.
-            // Re-read the winning transaction and return its stored snapshot.
-            log.warn("Concurrent same-key insert detected for key: {}, reading winner", idempotencyKey);
-            RewardTransaction winner = rewardTransactionRepository
-                    .findByCustomerIdAndIdempotencyKey(customerId, idempotencyKey)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Idempotency constraint violated but transaction not found for key: " + idempotencyKey));
-            return RewardTransactionMapper.toRedeemResponse(winner);
-        }
-
-        log.info("Points redeemed: {} for customer: {}, remaining balance: {}",
-                request.points(), customerId, customer.getRewardBalance());
-
-        return RewardTransactionMapper.toRedeemResponse(transaction);
     }
 }

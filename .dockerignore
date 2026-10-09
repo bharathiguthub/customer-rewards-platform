@@ -1,0 +1,40 @@
+# Git and IDE files
+.git
+.gitignore
+.idea
+*.iml
+*.iws
+*.ipr
+
+# Build artifacts (excluding gradle wrapper)
+build/
+*.class
+*.war
+*.ear
+
+# Gradle build directory
+.gradle/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+.secrets
+
+# IDE and editor files
+.vscode/
+.editorconfig
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# CI/CD
+.agents/
+.github/
+
+# Logs
+logs/
+
+

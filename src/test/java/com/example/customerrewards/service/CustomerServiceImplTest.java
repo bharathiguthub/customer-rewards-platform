@@ -3,11 +3,11 @@ package com.example.customerrewards.service;
 import com.example.customerrewards.dto.request.CreateCustomerRequest;
 import com.example.customerrewards.dto.response.CustomerResponse;
 import com.example.customerrewards.dto.response.RewardBalanceResponse;
-import com.example.customerrewards.entity.Customer;
+import com.example.customerrewards.dynamodb.models.DynamoCustomer;
+import com.example.customerrewards.dynamodb.repository.DynamoCustomerRepository;
+import com.example.customerrewards.dynamodb.repository.DynamoRewardTransactionRepository;
 import com.example.customerrewards.exception.CustomerNotFoundException;
 import com.example.customerrewards.exception.DuplicateCustomerEmailException;
-import com.example.customerrewards.repository.CustomerRepository;
-import com.example.customerrewards.repository.RewardTransactionRepository;
 import com.example.customerrewards.service.impl.CustomerServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,39 +28,40 @@ import static org.mockito.Mockito.when;
 class CustomerServiceImplTest {
 
     @Mock
-    private CustomerRepository customerRepository;
+    private DynamoCustomerRepository dynamoCustomerRepository;
 
     @Mock
-    private RewardTransactionRepository rewardTransactionRepository;
+    private DynamoRewardTransactionRepository dynamoTransactionRepository;
 
     @InjectMocks
     private CustomerServiceImpl customerService;
 
-    private Customer buildCustomer(UUID id, String email) {
-        Customer c = new Customer();
-        c.setId(id);
-        c.setFirstName("Alice");
-        c.setLastName("Nguyen");
-        c.setEmail(email);
-        c.setRewardBalance(0);
-        c.setCreatedAt(Instant.now());
-        c.setUpdatedAt(Instant.now());
-        return c;
+    private DynamoCustomer buildDynamoCustomer(String id, String email) {
+        return new DynamoCustomer(
+            id,
+            "Alice",
+            "Nguyen",
+            email,
+            0,
+            1,
+            Instant.now(),
+            Instant.now()
+        );
     }
 
     @Test
     void createCustomer_success() {
-        UUID id = UUID.randomUUID();
+        String id = UUID.randomUUID().toString();
         String email = "alice@example.com";
         CreateCustomerRequest request = new CreateCustomerRequest("Alice", "Nguyen", email);
-        Customer saved = buildCustomer(id, email);
+        DynamoCustomer saved = buildDynamoCustomer(id, email);
 
-        when(customerRepository.existsByEmail(email)).thenReturn(false);
-        when(customerRepository.save(any(Customer.class))).thenReturn(saved);
+        when(dynamoCustomerRepository.existsByEmail(email)).thenReturn(false);
+        when(dynamoCustomerRepository.save(any(DynamoCustomer.class))).thenReturn(saved);
 
         CustomerResponse response = customerService.createCustomer(request);
 
-        assertThat(response.customerId()).isEqualTo(id);
+        assertThat(response.customerId()).isEqualTo(UUID.fromString(id));
         assertThat(response.email()).isEqualTo(email);
         assertThat(response.rewardBalance()).isEqualTo(0);
     }
@@ -68,7 +69,7 @@ class CustomerServiceImplTest {
     @Test
     void createCustomer_duplicateEmail_throwsDuplicateCustomerEmailException() {
         CreateCustomerRequest request = new CreateCustomerRequest("Alice", "Nguyen", "dup@example.com");
-        when(customerRepository.existsByEmail("dup@example.com")).thenReturn(true);
+        when(dynamoCustomerRepository.existsByEmail("dup@example.com")).thenReturn(true);
 
         assertThrows(DuplicateCustomerEmailException.class, () -> customerService.createCustomer(request));
     }
@@ -76,8 +77,8 @@ class CustomerServiceImplTest {
     @Test
     void getCustomer_found_returnsCustomerResponse() {
         UUID id = UUID.randomUUID();
-        Customer customer = buildCustomer(id, "found@example.com");
-        when(customerRepository.findById(id)).thenReturn(Optional.of(customer));
+        DynamoCustomer customer = buildDynamoCustomer(id.toString(), "found@example.com");
+        when(dynamoCustomerRepository.findById(id.toString())).thenReturn(Optional.of(customer));
 
         CustomerResponse response = customerService.getCustomer(id);
 
@@ -88,7 +89,7 @@ class CustomerServiceImplTest {
     @Test
     void getCustomer_notFound_throwsCustomerNotFoundException() {
         UUID id = UUID.randomUUID();
-        when(customerRepository.findById(id)).thenReturn(Optional.empty());
+        when(dynamoCustomerRepository.findById(id.toString())).thenReturn(Optional.empty());
 
         assertThrows(CustomerNotFoundException.class, () -> customerService.getCustomer(id));
     }
@@ -96,20 +97,20 @@ class CustomerServiceImplTest {
     @Test
     void getRewardBalance_found_returnsBalance() {
         UUID id = UUID.randomUUID();
-        Customer customer = buildCustomer(id, "balance@example.com");
-        customer.setRewardBalance(500);
-        when(customerRepository.findById(id)).thenReturn(Optional.of(customer));
+        DynamoCustomer customer = buildDynamoCustomer(id.toString(), "test@example.com");
+        customer.setRewardBalance(1000);
+        when(dynamoCustomerRepository.findById(id.toString())).thenReturn(Optional.of(customer));
 
         RewardBalanceResponse response = customerService.getRewardBalance(id);
 
         assertThat(response.customerId()).isEqualTo(id);
-        assertThat(response.rewardBalance()).isEqualTo(500);
+        assertThat(response.rewardBalance()).isEqualTo(1000);
     }
 
     @Test
     void getRewardBalance_notFound_throwsCustomerNotFoundException() {
         UUID id = UUID.randomUUID();
-        when(customerRepository.findById(id)).thenReturn(Optional.empty());
+        when(dynamoCustomerRepository.findById(id.toString())).thenReturn(Optional.empty());
 
         assertThrows(CustomerNotFoundException.class, () -> customerService.getRewardBalance(id));
     }
